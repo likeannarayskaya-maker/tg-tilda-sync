@@ -59,6 +59,9 @@ class Config:
         # Anthropic API
         self.anthropic_api_key: str = os.environ.get("ANTHROPIC_API_KEY", "")
 
+        # Webhook
+        self.webhook_url: str = os.environ.get("WEBHOOK_URL", "")
+
         # Заголовок
         self.title_strategy: str = os.environ.get("TITLE_STRATEGY", "first_line")
         self.title_max_words: int = int(os.environ.get("TITLE_MAX_WORDS", "10"))

@@ -66,6 +66,36 @@ class TelegramReader:
         logger.info("Получено %d новых постов (offset=%d)", len(posts), offset)
         return posts
 
+    def parse_update(self, update: dict) -> TelegramPost | None:
+        """Парсит единичный update из webhook в TelegramPost."""
+        msg = update.get("channel_post")
+        if not msg:
+            return None
+        return self._parse_message(msg, update.get("update_id", 0))
+
+    def set_webhook(self, url: str) -> bool:
+        """Регистрирует webhook в Telegram Bot API."""
+        data = self._call("setWebhook", {
+            "url": url,
+            "allowed_updates": ["channel_post"],
+        })
+        ok = bool(data and data.get("ok"))
+        if ok:
+            logger.info("Webhook установлен: %s", url)
+        else:
+            logger.error("Ошибка установки webhook: %s", data)
+        return ok
+
+    def delete_webhook(self) -> bool:
+        """Удаляет webhook из Telegram Bot API."""
+        data = self._call("deleteWebhook")
+        ok = bool(data and data.get("ok"))
+        if ok:
+            logger.info("Webhook удалён")
+        else:
+            logger.error("Ошибка удаления webhook: %s", data)
+        return ok
+
     def download_photo(self, file_id: str) -> str:
         """Скачивает фото по file_id и возвращает локальный путь."""
         file_info = self._call("getFile", {"file_id": file_id})

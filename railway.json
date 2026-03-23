@@ -4,7 +4,9 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "python main.py --loop",
+    "startCommand": "python main.py --webhook",
+    "healthcheckPath": "/",
+    "healthcheckTimeout": 10,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }

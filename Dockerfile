@@ -9,4 +9,4 @@ COPY . .
 
 RUN mkdir -p logs db screenshots
 
-CMD ["python", "main.py", "--loop"]
+CMD ["python", "main.py", "--webhook"]
