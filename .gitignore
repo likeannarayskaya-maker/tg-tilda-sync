@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+db/
+logs/
+screenshots/
+storage_state.json
+venv/
+.venv/
+/tmp/

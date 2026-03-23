@@ -1,0 +1,10 @@
+.env
+.git
+__pycache__
+*.pyc
+db/
+logs/
+screenshots/
+storage_state.json
+venv/
+.venv/

@@ -1,0 +1,13 @@
+[Unit]
+Description=Telegram to Tilda Feeds Sync
+After=network.target
+
+[Service]
+Type=oneshot
+User=tgsync
+WorkingDirectory=/opt/tg-tilda-sync
+EnvironmentFile=/opt/tg-tilda-sync/.env
+ExecStart=/opt/tg-tilda-sync/venv/bin/python main.py
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
