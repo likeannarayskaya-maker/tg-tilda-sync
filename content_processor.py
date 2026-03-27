@@ -47,17 +47,23 @@ class ContentProcessor:
 
     def process(self, post: TelegramPost) -> ProcessedPost:
         """Конвертирует TelegramPost в ProcessedPost, готовый к публикации."""
-        html_body = self._entities_to_html(post.text, post.entities)
+        title = self.extract_title(
+            post.text, self._title_strategy, self._title_max_words
+        )
+
+        # Убираем заголовок из текста, чтобы он не дублировался в html_body
+        body_text, body_entities = self._strip_title_from_text(
+            post.text, post.entities, self._title_strategy, self._title_max_words
+        )
+
+        html_body = self._entities_to_html(body_text, body_entities)
         html_body = html_body.replace("\n", "<br>")
 
         # Постобработка: убираем лишние <br> вокруг ссылок
         html_body = re.sub(r"<br><a ", " <a ", html_body)
         html_body = re.sub(r"</a><br>", "</a> ", html_body)
         html_body = re.sub(r"(<br>){3,}", "<br><br>", html_body)
-
-        title = self.extract_title(
-            post.text, self._title_strategy, self._title_max_words
-        )
+        html_body = re.sub(r"^(<br>)+", "", html_body)
 
         plain = re.sub(r"<[^>]+>", "", html_body).replace("<br>", " ")
         description = self._generate_description(post.text, plain)
@@ -164,6 +170,68 @@ class ContentProcessor:
     # ------------------------------------------------------------------
     # Внутренние методы
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _strip_title_from_text(
+        text: str,
+        entities: list[dict],
+        strategy: str,
+        max_words: int = 10,
+    ) -> tuple[str, list[dict]]:
+        """Удаляет из текста часть, использованную как заголовок, и сдвигает entities."""
+        clean = text.strip()
+        if not clean:
+            return text, entities
+
+        if strategy == "first_line":
+            # Убираем первую строку + разделитель (\n)
+            first_nl = text.find("\n")
+            if first_nl == -1:
+                # Весь текст — это заголовок
+                return "", []
+            chars_to_strip = first_nl + 1  # +1 для символа \n
+        else:
+            # first_n_words: убираем первые N слов
+            words = clean.split()[:max_words]
+            if len(words) >= len(clean.split()):
+                # Весь текст — это заголовок
+                return "", []
+            title_part = " ".join(words)
+            # Находим позицию конца title_part в оригинальном тексте
+            # Пропускаем ведущие пробелы
+            leading_spaces = len(text) - len(text.lstrip())
+            chars_to_strip = leading_spaces + len(title_part)
+            # Пропускаем пробелы/переносы после заголовка
+            while chars_to_strip < len(text) and text[chars_to_strip] in (" ", "\n"):
+                chars_to_strip += 1
+
+        # Считаем offset в UTF-16 code units (как в Telegram)
+        stripped_part = text[:chars_to_strip]
+        utf16_offset = len(stripped_part.encode("utf-16-le")) // 2
+
+        body_text = text[chars_to_strip:]
+
+        # Сдвигаем entities
+        adjusted: list[dict] = []
+        for ent in entities:
+            ent_start = ent["offset"]
+            ent_end = ent_start + ent["length"]
+
+            if ent_end <= utf16_offset:
+                # Entity целиком в удалённой части — пропускаем
+                continue
+
+            if ent_start < utf16_offset:
+                # Entity частично в удалённой части — обрезаем
+                new_length = ent_end - utf16_offset
+                new_ent = {**ent, "offset": 0, "length": new_length}
+            else:
+                # Entity целиком после удалённой части — сдвигаем
+                new_ent = {**ent, "offset": ent_start - utf16_offset}
+
+            adjusted.append(new_ent)
+
+        return body_text, adjusted
 
     @staticmethod
     def _entities_to_html(text: str, entities: list[dict]) -> str:
