@@ -50,6 +50,11 @@ class ContentProcessor:
         html_body = self._entities_to_html(post.text, post.entities)
         html_body = html_body.replace("\n", "<br>")
 
+        # Постобработка: убираем лишние <br> вокруг ссылок
+        html_body = re.sub(r"<br><a ", " <a ", html_body)
+        html_body = re.sub(r"</a><br>", "</a> ", html_body)
+        html_body = re.sub(r"(<br>){3,}", "<br><br>", html_body)
+
         title = self.extract_title(
             post.text, self._title_strategy, self._title_max_words
         )
