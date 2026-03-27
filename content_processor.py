@@ -59,9 +59,9 @@ class ContentProcessor:
         html_body = self._entities_to_html(body_text, body_entities)
         html_body = html_body.replace("\n", "<br>")
 
-        # Постобработка: убираем лишние <br> вокруг ссылок
-        html_body = re.sub(r"<br><a ", " <a ", html_body)
-        html_body = re.sub(r"</a><br>", "</a> ", html_body)
+        # Постобработка: убираем лишние <br> вокруг inline-тегов
+        html_body = re.sub(r"<br>\s*<(strong|em|u|s|a\s)", r" <\1", html_body)
+        html_body = re.sub(r"</(strong|em|u|s|a)>\s*<br>", r"</\1> ", html_body)
         html_body = re.sub(r"(<br>){3,}", "<br><br>", html_body)
         html_body = re.sub(r"^(<br>)+", "", html_body)
 
