@@ -56,14 +56,14 @@ class ContentProcessor:
             post.text, post.entities, self._title_strategy, self._title_max_words
         )
 
-        html_body = self._entities_to_html(body_text, body_entities)
-        html_body = html_body.replace("\n", "<br>")
+        # Предобработка переносов строк ДО конвертации entities
+        body_text, body_entities = self._preprocess_newlines(
+            body_text, body_entities
+        )
 
-        # Постобработка: убираем лишние <br> вокруг inline-тегов
-        html_body = re.sub(r"<br>\s*<(strong|em|u|s|a\s)", r" <\1", html_body)
-        html_body = re.sub(r"</(strong|em|u|s|a)>\s*<br>", r"</\1> ", html_body)
-        html_body = re.sub(r"(<br>){3,}", "<br><br>", html_body)
-        html_body = re.sub(r"^(<br>)+", "", html_body)
+        html_body = self._entities_to_html(body_text, body_entities)
+        # Оставшиеся \n — это абзацные разделители и переносы у эмодзи
+        html_body = html_body.replace("\n", "<br>")
 
         plain = re.sub(r"<[^>]+>", "", html_body).replace("<br>", " ")
         description = self._generate_description(post.text, plain)
@@ -170,6 +170,104 @@ class ContentProcessor:
     # ------------------------------------------------------------------
     # Внутренние методы
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_emoji_only_line(line: str) -> bool:
+        """Проверяет, содержит ли строка только эмодзи (без букв и цифр)."""
+        stripped = line.strip()
+        if not stripped:
+            return False
+        return not re.search(r"[a-zA-Zа-яА-ЯёЁ0-9]", stripped)
+
+    @staticmethod
+    def _preprocess_newlines(
+        text: str, entities: list[dict]
+    ) -> tuple[str, list[dict]]:
+        r"""Предобработка переносов строк в сыром тексте до конвертации entities.
+
+        Правила:
+        - 3+ \n подряд → схлопываем до \n\n
+        - \n\n → оставляем (разделитель абзацев, станет <br><br>)
+        - Одиночный \n → пробел, если соседняя строка НЕ emoji-only
+        - Одиночный \n рядом с emoji-only строкой → оставляем \n
+        """
+        if "\n" not in text:
+            return text, entities
+
+        # --- Шаг 1: Схлопываем 3+ \n до \n\n, корректируя entities ---
+        text, entities = ContentProcessor._collapse_excess_newlines(text, entities)
+
+        # --- Шаг 2: Одиночные \n → пробел (кроме emoji-only строк) ---
+        lines = text.split("\n")
+        result_parts: list[str] = []
+        for i, line in enumerate(lines):
+            if i > 0:
+                prev_line = lines[i - 1]
+                if (
+                    line == ""
+                    or prev_line == ""
+                    or ContentProcessor._is_emoji_only_line(prev_line)
+                    or ContentProcessor._is_emoji_only_line(line)
+                ):
+                    result_parts.append("\n")
+                else:
+                    result_parts.append(" ")
+            result_parts.append(line)
+
+        new_text = "".join(result_parts)
+        # \n → " " — длина не меняется, entities корректировать не нужно
+        return new_text, entities
+
+    @staticmethod
+    def _collapse_excess_newlines(
+        text: str, entities: list[dict]
+    ) -> tuple[str, list[dict]]:
+        r"""Схлопывает 3+ \n до \n\n и корректирует UTF-16 offsets в entities."""
+        # Находим серии из 3+ \n и вычисляем удалённые UTF-16 позиции
+        removals: list[tuple[int, int]] = []  # (utf16_start, count)
+        utf16_pos = 0
+        i = 0
+        while i < len(text):
+            if text[i] == "\n":
+                run_start_utf16 = utf16_pos
+                run_start = i
+                while i < len(text) and text[i] == "\n":
+                    i += 1
+                    utf16_pos += 1
+                run_len = i - run_start
+                if run_len >= 3:
+                    removals.append((run_start_utf16 + 2, run_len - 2))
+            else:
+                utf16_pos += len(text[i].encode("utf-16-le")) // 2
+                i += 1
+
+        if not removals:
+            return text, entities
+
+        new_text = re.sub(r"\n{3,}", "\n\n", text)
+
+        adjusted: list[dict] = []
+        for ent in entities:
+            orig_offset = ent["offset"]
+            orig_end = orig_offset + ent["length"]
+
+            shift = 0
+            length_reduction = 0
+            for rem_start, rem_count in removals:
+                rem_end = rem_start + rem_count
+                shift += max(0, min(rem_end, orig_offset) - rem_start)
+                inside_start = max(rem_start, orig_offset)
+                inside_end = min(rem_end, orig_end)
+                if inside_end > inside_start:
+                    length_reduction += inside_end - inside_start
+
+            new_length = ent["length"] - length_reduction
+            if new_length > 0:
+                adjusted.append(
+                    {**ent, "offset": orig_offset - shift, "length": new_length}
+                )
+
+        return new_text, adjusted
 
     @staticmethod
     def _strip_title_from_text(
