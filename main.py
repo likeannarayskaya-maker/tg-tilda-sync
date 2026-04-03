@@ -159,10 +159,20 @@ def create_webhook_app(
 ) -> web.Application:
     """Создаёт aiohttp-приложение с webhook-обработчиком."""
     logger = logging.getLogger(__name__)
+    processing_ids: set[int] = set()
 
     async def handle_health(_request: web.Request) -> web.Response:
         """Health check для Railway."""
         return web.Response(text="ok")
+
+    async def _process_post_background(raw_post) -> None:
+        """Обёртка для фоновой обработки поста с защитой от дублей."""
+        try:
+            await process_post(
+                raw_post, config, db, reader, processor, publisher, notifier,
+            )
+        finally:
+            processing_ids.discard(raw_post.message_id)
 
     async def handle_webhook(request: web.Request) -> web.Response:
         """Обработчик входящих обновлений от Telegram."""
@@ -175,11 +185,16 @@ def create_webhook_app(
 
         raw_post = reader.parse_update(update)
         if raw_post:
-            await process_post(
-                raw_post, config, db, reader, processor, publisher, notifier,
-            )
+            mid = raw_post.message_id
+            if mid in processing_ids:
+                logger.info("Пост #%d уже обрабатывается, пропуск", mid)
+            elif db.is_published(mid):
+                logger.debug("Пост #%d уже опубликован, пропуск", mid)
+            else:
+                processing_ids.add(mid)
+                asyncio.create_task(_process_post_background(raw_post))
 
-        # Telegram ожидает 200 OK, иначе будет повторять запрос
+        # Сразу возвращаем 200 OK — обработка идёт в фоне
         return web.Response(text="ok")
 
     async def on_startup(_app: web.Application) -> None:
