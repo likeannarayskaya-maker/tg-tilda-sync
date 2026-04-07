@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,8 +48,8 @@ class TildaPublisher:
     # ------------------------------------------------------------------
 
     async def publish(self, post: ProcessedPost, attempt: int = 1) -> None:
-        """Публикует пост в поток Tilda. Retry до 2 раз."""
-        max_attempts = 2
+        """Публикует пост в поток Tilda. Retry до 3 раз."""
+        max_attempts = 3
         try:
             await self._ensure_browser()
             await self._ensure_auth()
@@ -62,9 +64,10 @@ class TildaPublisher:
 
             if attempt < max_attempts:
                 logger.warning(
-                    "Ошибка публикации (попытка %d/%d): %s — повтор...",
+                    "Ошибка публикации (попытка %d/%d): %s — повтор через 15с...",
                     attempt, max_attempts, exc,
                 )
+                await asyncio.sleep(15)
                 # НЕ сбрасываем storage_state — капча при повторном логине
                 # Просто создаём новый контекст с существующей сессией
                 if self._context:
@@ -76,6 +79,7 @@ class TildaPublisher:
                     storage_state=str(STORAGE_STATE_FILE) if STORAGE_STATE_FILE.exists() else None,
                     viewport={"width": 1280, "height": 800},
                     locale="ru-RU",
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
                 )
                 self._page = await self._context.new_page()
                 await self.publish(post, attempt + 1)
@@ -130,6 +134,7 @@ class TildaPublisher:
             storage_state=storage,
             viewport={"width": 1280, "height": 800},
             locale="ru-RU",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         )
         self._page = await self._context.new_page()
 
@@ -146,6 +151,7 @@ class TildaPublisher:
         self._context = await self._browser.new_context(
             viewport={"width": 1280, "height": 800},
             locale="ru-RU",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         )
         self._page = await self._context.new_page()
 
@@ -159,6 +165,7 @@ class TildaPublisher:
         assert page is not None
 
         # Проверяем текущую сессию
+        await page.wait_for_timeout(random.randint(2000, 5000))
         await page.goto("https://tilda.ru/projects/", wait_until="domcontentloaded")
         await page.wait_for_timeout(2000)
 
@@ -169,14 +176,32 @@ class TildaPublisher:
 
         # Нужна авторизация
         logger.info("Сессия не активна, выполняю авторизацию...")
-        await self._login()
+        try:
+            await self._login()
+        except Exception as exc:
+            logger.warning(
+                "Авторизация не удалась: %s — сбрасываю контекст и пробую ещё раз...", exc
+            )
+            await self._reset_context()
+            await self._login()
 
     async def _login(self) -> None:
         """Выполняет полную авторизацию на Tilda."""
         page = self._page
         assert page is not None
 
-        await page.goto("https://tilda.ru/login/", wait_until="domcontentloaded")
+        # Переход на страницу логина с повторными попытками при ERR_ABORTED
+        for login_attempt in range(1, 4):
+            try:
+                logger.info("Попытка загрузки /login/ (%d/3)...", login_attempt)
+                await page.goto("https://tilda.ru/login/", wait_until="domcontentloaded")
+                break
+            except Exception as goto_exc:
+                if "ERR_ABORTED" in str(goto_exc) and login_attempt < 3:
+                    logger.warning("ERR_ABORTED при загрузке /login/, жду 10с...")
+                    await asyncio.sleep(10)
+                else:
+                    raise
         await page.wait_for_timeout(1000)
 
         # Email
@@ -238,6 +263,7 @@ class TildaPublisher:
         assert page is not None
 
         feeds_url = f"https://feeds.tilda.ru/?projectid={self._project_id}"
+        await page.wait_for_timeout(random.randint(2000, 5000))
         await page.goto(feeds_url, wait_until="domcontentloaded")
         await page.wait_for_timeout(2000)
 
@@ -248,8 +274,10 @@ class TildaPublisher:
                 "пробую авторизацию на поддомене..."
             )
             # Переходим на feeds через основной сайт (cookies обычно шарятся)
+            await page.wait_for_timeout(random.randint(2000, 5000))
             await page.goto("https://tilda.ru/projects/", wait_until="domcontentloaded")
             await page.wait_for_timeout(1000)
+            await page.wait_for_timeout(random.randint(2000, 5000))
             await page.goto(feeds_url, wait_until="domcontentloaded")
             await page.wait_for_timeout(2000)
 
@@ -271,6 +299,7 @@ class TildaPublisher:
         assert page is not None
 
         feeds_url = f"https://feeds.tilda.ru/?projectid={self._project_id}"
+        await page.wait_for_timeout(random.randint(2000, 5000))
         await page.goto(feeds_url, wait_until="domcontentloaded")
         await page.wait_for_timeout(2000)
 
